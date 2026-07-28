@@ -1,6 +1,10 @@
-"""The agent's four tools: Gemini function declarations plus the async
-functions that actually execute them against app/services/ (see
-docs/TDD.md section 3.3).
+"""The agent's tools: Gemini function declarations plus the async functions
+that actually execute them (see docs/TDD.md section 3.3).
+
+Four of the five wrap app/services/: `knowledge_search`, `lookup_order`,
+`check_availability`, and `book_appointment`. The fifth, `end_call`, is a
+control-flow signal rather than a data lookup: see its own docstring and
+`END_CALL_TOOL_NAME` below.
 
 Every tool function takes `organization_id` and `contact_id` as explicit
 parameters supplied by the caller (the graph's `tools` node, from graph
@@ -114,11 +118,35 @@ _BOOK_APPOINTMENT_DECLARATION = types.FunctionDeclaration(
     ),
 )
 
+# The signal the model uses to say a conversation is fully resolved (see
+# app/agent/graph.py's AgentState.should_end_call and AgentTurnResult). It
+# takes no arguments and, unlike the four tools above, never touches
+# app/services/: it exists purely so the graph has an unambiguous, model-
+# driven event to key off of, the same tool-calling mechanism the model
+# already uses for everything else rather than a separate ad hoc channel.
+# Meaningful mainly for voice calls (app/api/webhooks.py maps it to
+# `<Hangup>`); the SMS webhook keeps texting regardless, since a text
+# thread has no equivalent of hanging up.
+END_CALL_TOOL_NAME = "end_call"
+
+_END_CALL_DECLARATION = types.FunctionDeclaration(
+    name=END_CALL_TOOL_NAME,
+    description=(
+        "Call this once, and only once, when the customer's request has been "
+        "fully handled and there is nothing further to help with, so the "
+        "conversation can end. On a phone call this hangs up right after your "
+        "next reply, so make that reply a natural closing line. Do not call "
+        "this while the customer might still have something to ask."
+    ),
+    parameters=types.Schema(type=types.Type.OBJECT, properties={}),
+)
+
 TOOL_DECLARATIONS = [
     _KNOWLEDGE_SEARCH_DECLARATION,
     _LOOKUP_ORDER_DECLARATION,
     _CHECK_AVAILABILITY_DECLARATION,
     _BOOK_APPOINTMENT_DECLARATION,
+    _END_CALL_DECLARATION,
 ]
 
 # What app/agent/graph.py's `agent` node hands to `gemini_client.generate_content`
@@ -228,11 +256,31 @@ async def book_appointment(
     }
 
 
+async def end_call(
+    session: AsyncSession,
+    organization_id: uuid.UUID,
+    contact_id: uuid.UUID,
+) -> dict[str, Any]:
+    """The `end_call` tool's implementation: a deliberate no-op.
+
+    Every tool call the model makes needs a function response so its next
+    turn's history is well-formed (the same reason every other tool here
+    returns a dict rather than `None`); `end_call` has no service to call,
+    it exists only so app/agent/graph.py's `tools` node has a call to
+    recognize by name and flip `AgentState.should_end_call` on. `session`,
+    `organization_id`, and `contact_id` are accepted, unused, purely to
+    match the uniform dispatch signature every other tool in
+    `TOOL_FUNCTIONS` has (see `execute_tool`).
+    """
+    return {"acknowledged": True}
+
+
 TOOL_FUNCTIONS: dict[str, Callable[..., Awaitable[dict[str, Any]]]] = {
     "knowledge_search": knowledge_search,
     "lookup_order": lookup_order,
     "check_availability": check_availability,
     "book_appointment": book_appointment,
+    END_CALL_TOOL_NAME: end_call,
 }
 
 

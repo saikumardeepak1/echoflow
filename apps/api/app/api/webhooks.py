@@ -1,8 +1,9 @@
 """Twilio webhook routes.
 
-See docs/TDD.md section 3.6 for the signature verification design and
+See docs/TDD.md section 3.6 for the signature verification design,
 docs/ARCHITECTURE.md "Request flow: inbound voice call" / "Request flow:
-inbound SMS" for the flows this module implements.
+inbound SMS" for the flows this module implements, and docs/TDD.md section
+3.3 for the agent graph both handlers call into for their replies.
 """
 
 import logging
@@ -11,16 +12,19 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.graph import run_agent_turn
 from app.core.db import get_session
 from app.core.logging import set_correlation_id
 from app.services.conversation_service import (
     find_or_create_contact,
     find_or_create_open_conversation,
+    load_recent_history,
     persist_message,
     resolve_organization_by_number,
 )
 from app.services.twilio_service import (
     build_gather_speech,
+    build_hangup,
     build_say_and_gather,
     build_sms_reply,
     require_twilio_signature,
@@ -30,18 +34,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/webhooks", tags=["webhooks"])
 
-# Real agent-generated replies land in a later issue (see docs/ROADMAP.md);
-# for now every inbound SMS gets this static acknowledgement so the full
-# webhook -> persistence -> TwiML reply loop is exercised end to end without
-# waiting on the agent orchestration work.
-_ACKNOWLEDGEMENT_REPLY = "Thanks for reaching out. We'll get back to you shortly."
-
-# Same placeholder strategy as the SMS webhook above, applied to voice: the
-# real agent graph (docs/TDD.md section 3.3) generates replies in a later
-# issue. For now every call gets a greeting on pickup and this static
-# acknowledgement after each turn.
+# The first thing a caller hears on pickup, before they have said anything
+# for the agent to respond to, so there is no agent turn to run yet; every
+# turn after this one is a real agent-generated reply (see voice_respond).
 _VOICE_GREETING = "Thanks for calling. How can I help you today?"
-_VOICE_ACKNOWLEDGEMENT_REPLY = "Got it. Someone from our team will follow up shortly."
 
 
 @router.post(
@@ -58,7 +54,8 @@ async def sms_incoming(
 ) -> Response:
     """Handle an inbound SMS: resolve the organization by the `To` number,
     find-or-create the `Contact`/`Conversation`, persist the inbound
-    `Message`, and reply with a static TwiML acknowledgement.
+    `Message`, run the agent on the conversation so far, persist its reply,
+    and return the reply as TwiML.
     """
     # Once the payload is parsed, tag the rest of this request's log lines
     # with the Twilio MessageSid rather than the generic request id the
@@ -85,9 +82,13 @@ async def sms_incoming(
         content=body,
         twilio_sid=message_sid,
     )
+
+    history = await load_recent_history(session, conversation.id)
+    turn = await run_agent_turn(session, organization.id, contact.id, conversation.id, history)
+    await persist_message(session, conversation.id, role="assistant", content=turn.reply_text)
     await session.commit()
 
-    twiml = build_sms_reply(_ACKNOWLEDGEMENT_REPLY)
+    twiml = build_sms_reply(turn.reply_text)
     return Response(content=twiml, media_type="application/xml")
 
 
@@ -143,14 +144,14 @@ async def voice_respond(
 ) -> Response:
     """Handle one turn of an in-progress call: resolve the organization and
     the already-open `Conversation` the same way `voice_incoming` did,
-    persist the caller's transcribed turn plus a placeholder reply, and
-    gather the next turn.
+    persist the caller's transcribed turn, run the agent on the conversation
+    so far, and persist its reply.
 
-    Ending the call (`<Hangup>`) is a decision the real agent graph makes
-    once it exists (docs/TDD.md section 3.3, a later issue); until then this
-    handler always loops with another `<Gather>` rather than guessing at an
-    end-of-call condition, so the caller is never cut off mid-conversation
-    by placeholder logic standing in for the agent.
+    Ending the call (`<Hangup>`) versus continuing to listen (`<Gather>`) is
+    the agent's own call: `run_agent_turn`'s `should_end_call` is `True` once
+    the model has called the `end_call` tool (app/agent/tools.py) to say the
+    conversation is resolved, so this handler defers to that flag rather
+    than guessing at an end-of-call condition itself.
     """
     set_correlation_id(call_sid)
 
@@ -172,14 +173,16 @@ async def voice_respond(
         content=speech_result,
         twilio_sid=call_sid,
     )
-    await persist_message(
-        session,
-        conversation.id,
-        role="assistant",
-        content=_VOICE_ACKNOWLEDGEMENT_REPLY,
-    )
+
+    history = await load_recent_history(session, conversation.id)
+    turn = await run_agent_turn(session, organization.id, contact.id, conversation.id, history)
+    await persist_message(session, conversation.id, role="assistant", content=turn.reply_text)
     await session.commit()
 
+    if turn.should_end_call:
+        twiml = build_hangup(turn.reply_text)
+        return Response(content=twiml, media_type="application/xml")
+
     action_url = str(request.url_for("voice_respond"))
-    twiml = build_say_and_gather(_VOICE_ACKNOWLEDGEMENT_REPLY, action_url)
+    twiml = build_say_and_gather(turn.reply_text, action_url)
     return Response(content=twiml, media_type="application/xml")

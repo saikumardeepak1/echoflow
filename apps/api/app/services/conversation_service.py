@@ -2,10 +2,10 @@
 
 See docs/TDD.md section 3.2: this service resolves the owning organization
 for an inbound webhook, finds-or-creates the `Contact` and `Conversation`
-rows for it, and persists each turn as a `Message` row. It is deliberately
-channel-agnostic (`channel` is a parameter, never hardcoded) so both the SMS
-webhook (app/api/webhooks.py) and the voice webhook (a follow-up issue) share
-this exact logic rather than duplicating it.
+rows for it, persists each turn as a `Message` row, and loads recent history
+for agent context. It is deliberately channel-agnostic (`channel` is a
+parameter, never hardcoded) so both the SMS webhook and the voice webhook
+(app/api/webhooks.py) share this exact logic rather than duplicating it.
 
 None of these functions call `session.commit()`; they `flush()` so
 newly-created rows get their generated primary keys and are visible to
@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import contains_eager, selectinload
 
+from app.agent.graph import HISTORY_WINDOW, HistoryMessage
 from app.models.contact import Contact
 from app.models.conversation import Conversation
 from app.models.message import Message
@@ -191,3 +192,36 @@ async def get_conversation_with_messages(
         .order_by(Message.created_at)
     )
     return result.unique().scalar_one_or_none()
+
+
+async def load_recent_history(
+    session: AsyncSession, conversation_id: uuid.UUID, limit: int = HISTORY_WINDOW
+) -> list[HistoryMessage]:
+    """Load the most recent `limit` turns of `conversation_id`, oldest
+    first, shaped for `app.agent.graph.run_agent_turn`'s `message_history`
+    parameter (see docs/TDD.md section 3.3: conversation memory is loaded
+    from the `messages` table before the graph runs, windowed to a
+    recent-N turns rather than the full, unbounded conversation).
+
+    Queries newest-first with `LIMIT` so the database only ever returns as
+    many rows as the graph will use, then reverses the page back to
+    chronological order before shaping it, rather than fetching every
+    `Message` row for the conversation and windowing in Python; on a long
+    conversation the latter would mean an unbounded query for a bounded
+    result. `limit` defaults to `HISTORY_WINDOW`, the graph's own window
+    size, so this function and the graph agree on "recent" by construction
+    instead of two independently maintained constants drifting apart;
+    callers scoped to unusual context needs (there are none yet) can still
+    override it.
+    """
+    result = await session.execute(
+        select(Message)
+        .where(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at.desc())
+        .limit(limit)
+    )
+    recent_newest_first = list(result.scalars().all())
+    recent_newest_first.reverse()
+    return [
+        {"role": message.role, "content": message.content} for message in recent_newest_first
+    ]
