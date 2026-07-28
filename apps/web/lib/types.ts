@@ -28,3 +28,27 @@ export interface TokenPairResponse {
   expires_in: number;
   user: UserResponse;
 }
+
+/**
+ * Mirrors apps/api/app/schemas/appointment.py (AppointmentResponse /
+ * AppointmentUpdateRequest, issue #12). Keep in sync if the API contract
+ * changes.
+ */
+export type AppointmentStatus = "scheduled" | "completed" | "cancelled";
+
+export interface AppointmentResponse {
+  id: string;
+  contact_id: string;
+  scheduled_at: string;
+  duration_minutes: number;
+  status: AppointmentStatus;
+  notes: string | null;
+  created_at: string;
+}
+
+export interface AppointmentUpdateRequest {
+  scheduled_at?: string;
+  duration_minutes?: number;
+  notes?: string;
+  status?: AppointmentStatus;
+}

@@ -1,5 +1,11 @@
 import { clearTokens, getAccessToken, getRefreshToken, storeTokenPair } from "./token-storage";
-import type { LoginRequest, RefreshRequest, TokenPairResponse } from "./types";
+import type {
+  AppointmentResponse,
+  AppointmentUpdateRequest,
+  LoginRequest,
+  RefreshRequest,
+  TokenPairResponse,
+} from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -128,6 +134,20 @@ export async function login(payload: LoginRequest): Promise<TokenPairResponse> {
 
 export function logout(): void {
   clearTokens();
+}
+
+export async function listAppointments(): Promise<AppointmentResponse[]> {
+  return apiFetch<AppointmentResponse[]>("/v1/appointments");
+}
+
+export async function updateAppointment(
+  id: string,
+  payload: AppointmentUpdateRequest,
+): Promise<AppointmentResponse> {
+  return apiFetch<AppointmentResponse>(`/v1/appointments/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
 }
 
 export { getAccessToken, getStoredUser } from "./token-storage";
