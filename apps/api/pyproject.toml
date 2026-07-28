@@ -19,6 +19,9 @@ dependencies = [
     "redis>=5.0,<6",
     "rq>=1.16,<2",
     "twilio>=9.0,<10",
+    "argon2-cffi>=23.1,<24",
+    "pyjwt>=2.8,<3",
+    "email-validator>=2.1,<3",
 ]
 
 [project.optional-dependencies]
@@ -66,6 +69,14 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.coverage.run]
+# SQLAlchemy's async ORM bridges its (sync-only) unit-of-work internals onto
+# the asyncio DBAPI driver via greenlet, switching stacks outside the normal
+# coroutine machinery. Without this, coverage silently under-reports every
+# line that runs after the first awaited query in a request handler (the
+# greenlet switch loses the trace function), which would misreport real,
+# exercised route code (see app/api/auth.py, app/api/api_keys.py) as untested.
+concurrency = ["greenlet"]
+
 # app/workers/worker.py is the RQ process entrypoint: it constructs a Redis
 # connection, a Queue, and a Worker, then calls worker.work(), which blocks
 # forever polling for jobs. There is nothing meaningful a test could assert

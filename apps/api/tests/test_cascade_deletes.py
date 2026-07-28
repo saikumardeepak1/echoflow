@@ -5,7 +5,8 @@ Organization removes the entire tenant's data in one statement (no manual
 per-table cleanup required, and no orphaned rows left behind). The same
 cascade chain applies one level down: deleting a Contact removes its
 Conversations/Orders/Appointments, deleting a Conversation removes its
-Messages, and deleting an Appointment removes its Notifications.
+Messages, deleting an Appointment removes its Notifications, and deleting a
+User removes its RefreshTokens.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -24,6 +25,7 @@ from app.models import (
     Order,
     Organization,
     PhoneNumber,
+    RefreshToken,
     User,
 )
 
@@ -52,6 +54,14 @@ async def test_deleting_organization_cascades_to_every_tenant_scoped_table(
     )
     contact = Contact(organization_id=organization.id, e164_number="+15550002222")
     db_session.add_all([user, api_key, phone_number, knowledge_document, contact])
+    await db_session.flush()
+
+    refresh_token = RefreshToken(
+        user_id=user.id,
+        hashed_token="hashed-refresh-token-value",
+        expires_at=datetime.now(UTC) + timedelta(days=7),
+    )
+    db_session.add(refresh_token)
     await db_session.flush()
 
     conversation = Conversation(
@@ -88,6 +98,7 @@ async def test_deleting_organization_cascades_to_every_tenant_scoped_table(
     contact_id = contact.id
     conversation_id = conversation.id
     appointment_id = appointment.id
+    user_id = user.id
 
     await db_session.delete(organization)
     await db_session.commit()
@@ -124,8 +135,11 @@ async def test_deleting_organization_cascades_to_every_tenant_scoped_table(
         await db_session.execute(select(Appointment).where(Appointment.id == appointment_id))
     ).scalar_one_or_none() is None
 
-    # Second-order cascade: deleting the Contact/Conversation/Appointment
+    # Second-order cascade: deleting the Contact/Conversation/Appointment/User
     # (via the Organization delete) also removed their children.
+    assert (
+        await db_session.execute(select(RefreshToken).where(RefreshToken.user_id == user_id))
+    ).scalar_one_or_none() is None
     assert (
         await db_session.execute(
             select(Message).where(Message.conversation_id == conversation_id)
