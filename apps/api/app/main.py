@@ -5,6 +5,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.webhooks import router as webhooks_router
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.core.middleware import CorrelationIdMiddleware
@@ -50,6 +51,8 @@ app.add_middleware(
 # the time any route handler or service runs, and every log line the
 # request produces anywhere downstream carries it.
 app.add_middleware(CorrelationIdMiddleware)
+
+app.include_router(webhooks_router)
 
 
 @app.get("/health")
