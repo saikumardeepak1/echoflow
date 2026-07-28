@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "echoflow-api"
+version = "0.1.0"
+description = "EchoFlow API service: Twilio webhooks, agent orchestration, and the dashboard API"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<0.116",
+    "uvicorn[standard]>=0.30,<0.31",
+    "pydantic>=2.7,<3",
+    "pydantic-settings>=2.3,<3",
+    "sqlalchemy[asyncio]>=2.0,<2.1",
+    "asyncpg>=0.30,<0.31",
+    "alembic>=1.13,<1.14",
+    "redis>=5.0,<6",
+    "rq>=1.16,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.5,<0.6",
+    "mypy>=1.10,<1.11",
+    "pytest>=8.2,<9",
+    "pytest-asyncio>=0.23,<0.24",
+    "pytest-cov>=5.0,<6",
+    "httpx>=0.28.1,<0.29",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection idiom is `param: T = Depends(...)` (and the
+# same for Header/Query/Path/Body/Cookie) -- these calls are meant to be
+# evaluated once per parameter default, not treated as a mutable-default
+# footgun, so they're exempted from B008 rather than rewritten per call site.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Header",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Cookie",
+    "fastapi.File",
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+# app/workers/worker.py is the RQ process entrypoint: it constructs a Redis
+# connection, a Queue, and a Worker, then calls worker.work(), which blocks
+# forever polling for jobs. There is nothing meaningful a test could assert
+# about it beyond "the constructors were called with some arguments, then
+# wired to a mocked and never-called .work()", which would exercise no real
+# behavior. It has no jobs registered yet (that lands with the notification
+# worker in a later milestone), so it is excluded from coverage measurement
+# entirely rather than padded with a tautological test.
+omit = ["app/workers/worker.py"]
