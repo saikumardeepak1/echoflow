@@ -5,6 +5,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.analytics import router as analytics_router
 from app.api.api_keys import router as api_keys_router
 from app.api.appointments import router as appointments_router
 from app.api.auth import router as auth_router
@@ -60,6 +61,7 @@ app.add_middleware(
 app.add_middleware(CorrelationIdMiddleware)
 
 app.include_router(auth_router)
+app.include_router(analytics_router)
 app.include_router(api_keys_router)
 app.include_router(appointments_router)
 app.include_router(conversations_router)
