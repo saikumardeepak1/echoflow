@@ -1,5 +1,7 @@
 import { clearTokens, getAccessToken, getRefreshToken, storeTokenPair } from "./token-storage";
 import type {
+  AppointmentResponse,
+  AppointmentUpdateRequest,
   Conversation,
   ConversationChannel,
   ConversationDetail,
@@ -137,6 +139,20 @@ export async function login(payload: LoginRequest): Promise<TokenPairResponse> {
 
 export function logout(): void {
   clearTokens();
+}
+
+export async function listAppointments(): Promise<AppointmentResponse[]> {
+  return apiFetch<AppointmentResponse[]>("/v1/appointments");
+}
+
+export async function updateAppointment(
+  id: string,
+  payload: AppointmentUpdateRequest,
+): Promise<AppointmentResponse> {
+  return apiFetch<AppointmentResponse>(`/v1/appointments/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
 }
 
 /** Lists the caller's organization's knowledge documents, newest first. */
