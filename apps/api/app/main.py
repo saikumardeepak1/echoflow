@@ -11,6 +11,7 @@ from app.api.auth import router as auth_router
 from app.api.conversations import router as conversations_router
 from app.api.knowledge_documents import router as knowledge_documents_router
 from app.api.orders import router as orders_router
+from app.api.phone_numbers import router as phone_numbers_router
 from app.api.webhooks import router as webhooks_router
 from app.core.config import settings
 from app.core.logging import configure_logging
@@ -64,6 +65,7 @@ app.include_router(appointments_router)
 app.include_router(conversations_router)
 app.include_router(knowledge_documents_router)
 app.include_router(orders_router)
+app.include_router(phone_numbers_router)
 app.include_router(webhooks_router)
 
 
