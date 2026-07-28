@@ -2,6 +2,11 @@ import { clearTokens, getAccessToken, getRefreshToken, storeTokenPair } from "./
 import type {
   AppointmentResponse,
   AppointmentUpdateRequest,
+  Conversation,
+  ConversationChannel,
+  ConversationDetail,
+  KnowledgeDocument,
+  KnowledgeDocumentCreateRequest,
   LoginRequest,
   RefreshRequest,
   TokenPairResponse,
@@ -148,6 +153,45 @@ export async function updateAppointment(
     method: "PATCH",
     body: JSON.stringify(payload),
   });
+}
+
+/** Lists the caller's organization's knowledge documents, newest first. */
+export function listKnowledgeDocuments(): Promise<KnowledgeDocument[]> {
+  return apiFetch<KnowledgeDocument[]>("/v1/knowledge-documents");
+}
+
+export function createKnowledgeDocument(
+  payload: KnowledgeDocumentCreateRequest,
+): Promise<KnowledgeDocument> {
+  return apiFetch<KnowledgeDocument>("/v1/knowledge-documents", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteKnowledgeDocument(id: string): Promise<void> {
+  return apiFetch<void>(`/v1/knowledge-documents/${id}`, { method: "DELETE" });
+}
+
+/**
+ * Conversations belonging to the caller's organization, most recently
+ * created first (GET /v1/conversations, see
+ * apps/api/app/api/conversations.py). Optionally filtered by channel.
+ */
+export async function listConversations(params?: {
+  channel?: ConversationChannel;
+}): Promise<Conversation[]> {
+  const query = params?.channel ? `?channel=${encodeURIComponent(params.channel)}` : "";
+  return apiFetch<Conversation[]>(`/v1/conversations${query}`);
+}
+
+/**
+ * A single conversation with its full transcript in chronological order
+ * (GET /v1/conversations/{id}). Throws `ApiError` with status 404 if the
+ * conversation doesn't exist or belongs to another organization.
+ */
+export async function getConversation(id: string): Promise<ConversationDetail> {
+  return apiFetch<ConversationDetail>(`/v1/conversations/${encodeURIComponent(id)}`);
 }
 
 export { getAccessToken, getStoredUser } from "./token-storage";
