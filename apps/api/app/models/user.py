@@ -12,6 +12,7 @@ from app.models.base import UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
     from app.models.organization import Organization
+    from app.models.refresh_token import RefreshToken
 
 
 class User(UUIDPrimaryKeyMixin, Base):
@@ -28,3 +29,6 @@ class User(UUIDPrimaryKeyMixin, Base):
     role: Mapped[str] = mapped_column(String(50), nullable=False)
 
     organization: Mapped["Organization"] = relationship(back_populates="users")
+    refresh_tokens: Mapped[list["RefreshToken"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )

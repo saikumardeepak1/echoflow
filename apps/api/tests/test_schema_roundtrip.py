@@ -23,6 +23,7 @@ from app.models import (
     Order,
     Organization,
     PhoneNumber,
+    RefreshToken,
     User,
 )
 
@@ -59,6 +60,14 @@ async def test_full_fk_chain_round_trips(db_session: AsyncSession) -> None:
         closes_at=time(17, 0),
     )
     db_session.add_all([user, api_key, phone_number, knowledge_document, business_hours])
+    await db_session.flush()
+
+    refresh_token = RefreshToken(
+        user_id=user.id,
+        hashed_token="hashed-refresh-token-value",
+        expires_at=datetime.now(UTC) + timedelta(days=7),
+    )
+    db_session.add(refresh_token)
     await db_session.flush()
 
     contact = Contact(
@@ -125,6 +134,12 @@ async def test_full_fk_chain_round_trips(db_session: AsyncSession) -> None:
     ).scalar_one()
     assert fetched_key.organization_id == organization.id
     assert fetched_key.revoked_at is None
+
+    fetched_refresh_token = (
+        await db_session.execute(select(RefreshToken).where(RefreshToken.id == refresh_token.id))
+    ).scalar_one()
+    assert fetched_refresh_token.user_id == user.id
+    assert fetched_refresh_token.revoked_at is None
 
     fetched_phone = (
         await db_session.execute(select(PhoneNumber).where(PhoneNumber.id == phone_number.id))

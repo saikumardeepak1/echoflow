@@ -30,11 +30,15 @@ class Settings(BaseSettings):
     # wired up in Milestone 3.
     gemini_api_key: str = "dev-placeholder-gemini-key"
 
-    # Dashboard auth (see docs/TDD.md section 3.6, built in a later
-    # Milestone 1 issue). jwt_secret signs session JWTs; api_key_pepper is
-    # the HMAC pepper used to deterministically hash API keys and refresh
-    # tokens so a presented secret can be looked up by exact hash match.
+    # Dashboard auth (see docs/TDD.md section 3.6). jwt_secret signs session
+    # JWTs; api_key_pepper is the HMAC pepper used to deterministically hash
+    # API keys and refresh tokens so a presented secret can be looked up by
+    # exact hash match. Access tokens are short-lived and stateless; refresh
+    # tokens are longer-lived, single-use, and rotated on every refresh.
     jwt_secret: str = "dev-secret-change-me-32-bytes-min"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 15
+    refresh_token_expire_days: int = 7
     api_key_pepper: str = "dev-api-key-pepper-change-me"
 
     # Comma-separated list of origins allowed to call the API from a browser

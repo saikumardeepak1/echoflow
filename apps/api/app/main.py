@@ -5,6 +5,8 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.api_keys import router as api_keys_router
+from app.api.auth import router as auth_router
 from app.api.webhooks import router as webhooks_router
 from app.core.config import settings
 from app.core.logging import configure_logging
@@ -52,6 +54,8 @@ app.add_middleware(
 # request produces anywhere downstream carries it.
 app.add_middleware(CorrelationIdMiddleware)
 
+app.include_router(auth_router)
+app.include_router(api_keys_router)
 app.include_router(webhooks_router)
 
 

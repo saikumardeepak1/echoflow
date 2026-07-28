@@ -17,6 +17,7 @@ from app.models.notification import Notification
 from app.models.order import Order
 from app.models.organization import Organization
 from app.models.phone_number import PhoneNumber
+from app.models.refresh_token import RefreshToken
 from app.models.user import User
 
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "Organization",
     "User",
     "ApiKey",
+    "RefreshToken",
     "PhoneNumber",
     "Contact",
     "Conversation",
