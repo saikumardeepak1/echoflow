@@ -17,6 +17,7 @@ import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import contains_eager, selectinload
 
 from app.models.contact import Contact
 from app.models.conversation import Conversation
@@ -127,3 +128,66 @@ async def persist_message(
     session.add(message)
     await session.flush()
     return message
+
+
+async def list_conversations(
+    session: AsyncSession,
+    organization_id: uuid.UUID,
+    channel: str | None = None,
+    contact_id: uuid.UUID | None = None,
+) -> list[Conversation]:
+    """All conversations belonging to `organization_id`, most recently
+    created first, for the dashboard's conversation log viewer (see
+    docs/TDD.md section 3.2 and issue #9).
+
+    `channel` and `contact_id` are optional filters; when omitted, every
+    conversation for the organization is returned. Eager-loads `contact`
+    (`selectinload`, a second query rather than a JOIN) since route handlers
+    read `conversation.contact.e164_number` to build the response, and
+    implicit lazy loading is not safe to trigger from ordinary attribute
+    access under SQLAlchemy's async engine.
+    """
+    query = (
+        select(Conversation)
+        .options(selectinload(Conversation.contact))
+        .where(Conversation.organization_id == organization_id)
+    )
+    if channel is not None:
+        query = query.where(Conversation.channel == channel)
+    if contact_id is not None:
+        query = query.where(Conversation.contact_id == contact_id)
+    query = query.order_by(Conversation.created_at.desc())
+
+    result = await session.execute(query)
+    return list(result.scalars().all())
+
+
+async def get_conversation_with_messages(
+    session: AsyncSession, organization_id: uuid.UUID, conversation_id: uuid.UUID
+) -> Conversation | None:
+    """A single conversation, scoped to `organization_id` so one org can
+    never read (or even distinguish "not found" from "not yours" for)
+    another org's conversation by guessing its id. Eager-loads `contact` and
+    `messages` (the latter ordered chronologically, oldest first, so the
+    transcript reads top to bottom the way the conversation happened).
+
+    Uses an outer join plus `contains_eager` (rather than `selectinload`) for
+    `messages` specifically so the ordering can be applied to the join
+    itself via `order_by`; `.unique()` is required on the result because that
+    join produces one row per message, including a duplicate `Conversation`
+    row per message.
+    """
+    result = await session.execute(
+        select(Conversation)
+        .outerjoin(Conversation.messages)
+        .options(
+            selectinload(Conversation.contact),
+            contains_eager(Conversation.messages),
+        )
+        .where(
+            Conversation.id == conversation_id,
+            Conversation.organization_id == organization_id,
+        )
+        .order_by(Message.created_at)
+    )
+    return result.unique().scalar_one_or_none()

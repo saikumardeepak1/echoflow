@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.api_keys import router as api_keys_router
 from app.api.appointments import router as appointments_router
 from app.api.auth import router as auth_router
+from app.api.conversations import router as conversations_router
 from app.api.knowledge_documents import router as knowledge_documents_router
 from app.api.orders import router as orders_router
 from app.api.webhooks import router as webhooks_router
@@ -60,6 +61,7 @@ app.add_middleware(CorrelationIdMiddleware)
 app.include_router(auth_router)
 app.include_router(api_keys_router)
 app.include_router(appointments_router)
+app.include_router(conversations_router)
 app.include_router(knowledge_documents_router)
 app.include_router(orders_router)
 app.include_router(webhooks_router)
