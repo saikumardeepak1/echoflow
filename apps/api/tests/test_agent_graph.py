@@ -92,7 +92,9 @@ async def test_plain_response_never_calls_a_tool(
         db_session, organization_id, contact_id, conversation_id, _history()
     )
 
-    assert result == "Hi! How can I help?"
+    assert result == graph.AgentTurnResult(
+        reply_text="Hi! How can I help?", should_end_call=False
+    )
     execute_tool_mock.assert_not_called()
 
 
@@ -132,7 +134,7 @@ async def test_graph_calls_the_right_tool_with_the_right_arguments(
         db_session, organization_id, contact_id, conversation_id, _history()
     )
 
-    assert result == "All set."
+    assert result == graph.AgentTurnResult(reply_text="All set.", should_end_call=False)
     execute_tool_mock.assert_awaited_once_with(
         db_session, organization_id, contact_id, tool_name, tool_args
     )
@@ -166,7 +168,10 @@ async def test_multi_tool_call_turn_handles_lookup_order_then_check_availability
         db_session, organization_id, contact_id, conversation_id, _history()
     )
 
-    assert result == "Your order ORD-1 is on its way, and I found an open slot."
+    assert result == graph.AgentTurnResult(
+        reply_text="Your order ORD-1 is on its way, and I found an open slot.",
+        should_end_call=False,
+    )
     assert execute_tool_mock.await_count == 2
     execute_tool_mock.assert_any_await(
         db_session, organization_id, contact_id, "lookup_order", {"order_number": "ORD-1"}
@@ -202,5 +207,95 @@ async def test_multiple_function_calls_in_a_single_response_both_execute(
         db_session, organization_id, contact_id, conversation_id, _history()
     )
 
-    assert result == "Done."
+    assert result == graph.AgentTurnResult(reply_text="Done.", should_end_call=False)
+    assert execute_tool_mock.await_count == 2
+
+
+# --- end_call / should_end_call -------------------------------------------
+
+
+async def test_end_call_tool_sets_should_end_call_true(
+    db_session: AsyncSession,
+    organization_id: uuid.UUID,
+    contact_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once the model calls `end_call`, the tools node runs it like any
+    other tool call, loops back to `agent` for the closing reply, and the
+    turn's result reports `should_end_call=True`.
+    """
+    responses = [
+        _function_call_response(("end_call", {})),
+        _text_response("Glad I could help. Have a great day!"),
+    ]
+    monkeypatch.setattr(gemini_client, "generate_content", _StubGenerateContent(*responses))
+    execute_tool_mock = AsyncMock(return_value={"acknowledged": True})
+    monkeypatch.setattr(agent_tools, "execute_tool", execute_tool_mock)
+
+    result = await graph.run_agent_turn(
+        db_session, organization_id, contact_id, conversation_id, _history()
+    )
+
+    assert result == graph.AgentTurnResult(
+        reply_text="Glad I could help. Have a great day!", should_end_call=True
+    )
+    execute_tool_mock.assert_awaited_once_with(
+        db_session, organization_id, contact_id, "end_call", {}
+    )
+
+
+async def test_should_end_call_is_false_when_end_call_is_never_invoked(
+    db_session: AsyncSession,
+    organization_id: uuid.UUID,
+    contact_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stub_response = _text_response("Sure, what else can I help with?")
+    monkeypatch.setattr(gemini_client, "generate_content", _StubGenerateContent(stub_response))
+    monkeypatch.setattr(agent_tools, "execute_tool", AsyncMock())
+
+    result = await graph.run_agent_turn(
+        db_session, organization_id, contact_id, conversation_id, _history()
+    )
+
+    assert result.should_end_call is False
+
+
+async def test_end_call_alongside_another_tool_call_in_the_same_response_still_ends(
+    db_session: AsyncSession,
+    organization_id: uuid.UUID,
+    contact_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gemini's parallel function calling means `end_call` can arrive
+    alongside a domain tool call in the same response (e.g. book the
+    appointment, then end the call); `should_end_call` should still end up
+    `True` regardless of call order within that batch.
+    """
+    responses = [
+        _function_call_response(
+            (
+                "book_appointment",
+                {"scheduled_at": "2026-08-03T14:00:00", "duration_minutes": 30},
+            ),
+            ("end_call", {}),
+        ),
+        _text_response("You're all set for August 3rd. Goodbye!"),
+    ]
+    monkeypatch.setattr(gemini_client, "generate_content", _StubGenerateContent(*responses))
+    execute_tool_mock = AsyncMock(
+        side_effect=[{"booked": True}, {"acknowledged": True}],
+    )
+    monkeypatch.setattr(agent_tools, "execute_tool", execute_tool_mock)
+
+    result = await graph.run_agent_turn(
+        db_session, organization_id, contact_id, conversation_id, _history()
+    )
+
+    assert result == graph.AgentTurnResult(
+        reply_text="You're all set for August 3rd. Goodbye!", should_end_call=True
+    )
     assert execute_tool_mock.await_count == 2

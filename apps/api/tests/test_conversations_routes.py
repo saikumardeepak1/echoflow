@@ -4,29 +4,66 @@ fixtures (see conftest.py).
 
 Conversations and messages are seeded the same way real ones come into
 being: genuinely, validly-signed Twilio POST requests to the SMS and voice
-webhook paths added by #6/#7 (same signing helper as
-tests/test_sms_webhook.py and tests/test_voice_webhook.py), rather than
-writing rows directly. That way these tests exercise the transcript API
-against data shaped exactly like production data.
+webhook paths (same signing helper as tests/test_sms_webhook.py and
+tests/test_voice_webhook.py), rather than writing rows directly. That way
+these tests exercise the transcript API against data shaped exactly like
+production data, including the assistant's own replies (app.agent.graph,
+wired into both webhooks in app/api/webhooks.py).
+
+These tests are about the transcript API, not the agent itself (see
+tests/test_agent_graph.py for that), so `_mock_gemini_reply` below (autouse)
+stubs `gemini_client.generate_content` for every test in this module with a
+deterministic plain-text reply per call, numbered by call order ("Reply 1",
+"Reply 2", ...) rather than by echoing the conversation content: every
+`_send_sms`/`_start_voice_call` in this file shares one test-scoped
+transaction (see conftest.py's `db_session`), so `Message.created_at` (a
+Postgres `now()` server default, constant for the whole transaction) ties
+across every row regardless of insertion order, the same reason
+test_list_conversations_orders_most_recently_created_first and
+test_get_conversation_returns_messages_in_chronological_order below assign
+`created_at` explicitly rather than relying on it as inserted. A reply keyed
+by call order stays unique and predictable even though which row a
+tied-`created_at` query happens to return first is not.
 """
 
 import base64
 import hashlib
 import hmac
+import itertools
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
+from google.genai import types
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent import gemini_client
 from app.core.config import settings
 from app.models import Contact, Conversation, Message, PhoneNumber
 
 TEST_AUTH_TOKEN = "test-auth-token-for-ci"
 SMS_WEBHOOK_URL = "http://test/v1/webhooks/sms/incoming"
 VOICE_INCOMING_URL = "http://test/v1/webhooks/voice/incoming"
+
+
+@pytest.fixture(autouse=True)
+def _mock_gemini_reply(monkeypatch: pytest.MonkeyPatch) -> None:
+    call_numbers = itertools.count(1)
+
+    def _stub_generate_content(**kwargs: Any) -> types.GenerateContentResponse:
+        reply_text = f"Reply {next(call_numbers)}"
+        return types.GenerateContentResponse(
+            candidates=[
+                types.Candidate(
+                    content=types.Content(role="model", parts=[types.Part(text=reply_text)])
+                )
+            ]
+        )
+
+    monkeypatch.setattr(gemini_client, "generate_content", _stub_generate_content)
 
 
 def _sign(url: str, params: dict[str, str], auth_token: str = TEST_AUTH_TOKEN) -> str:
@@ -260,12 +297,15 @@ async def test_get_conversation_returns_messages_in_chronological_order(
     client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # As in test_list_conversations_orders_most_recently_created_first: all
-    # three messages land in the same test transaction, so Postgres's
-    # `now()` (the server default backing `created_at`) would otherwise give
-    # them an identical timestamp. Setting `created_at` explicitly, in an
-    # order deliberately different from insertion order, makes this test
-    # prove the endpoint sorts by `created_at` rather than merely returning
-    # rows in whatever order Postgres happened to store them.
+    # six messages (three inbound turns, each with the agent's persisted
+    # reply) land in the same test transaction, so Postgres's `now()` (the
+    # server default backing `created_at`) would otherwise give them an
+    # identical timestamp. Setting `created_at` explicitly, in an order
+    # deliberately different from insertion order, makes this test prove the
+    # endpoint sorts by `created_at` rather than merely returning rows in
+    # whatever order Postgres happened to store them; each turn's assistant
+    # reply is kept immediately after its own user turn, matching how a real
+    # conversation reads.
     monkeypatch.setattr(settings, "twilio_auth_token", TEST_AUTH_TOKEN)
     access_token, org_id = await _register_and_get_access_token(client)
     await _add_phone_number(db_session, org_id, "+15005550006")
@@ -281,11 +321,17 @@ async def test_get_conversation_returns_messages_in_chronological_order(
             )
         )
     ).scalars().all()
+    # `_mock_gemini_reply` numbers its replies by call order ("Reply 1",
+    # "Reply 2", "Reply 3"), one per `_send_sms` above in the same order, so
+    # every one of the six rows has unique, predictable content to address.
     message_by_content = {m.content: m for m in messages}
-    # Deliberately assign timestamps out of insertion order.
-    message_by_content["Third message"].created_at = datetime(2026, 1, 1, tzinfo=UTC)
-    message_by_content["First message"].created_at = datetime(2026, 1, 2, tzinfo=UTC)
-    message_by_content["Second message"].created_at = datetime(2026, 1, 3, tzinfo=UTC)
+    # Deliberately assign timestamps out of insertion order, turn by turn.
+    message_by_content["Third message"].created_at = datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
+    message_by_content["Reply 3"].created_at = datetime(2026, 1, 1, 0, 1, tzinfo=UTC)
+    message_by_content["First message"].created_at = datetime(2026, 1, 2, 0, 0, tzinfo=UTC)
+    message_by_content["Reply 1"].created_at = datetime(2026, 1, 2, 0, 1, tzinfo=UTC)
+    message_by_content["Second message"].created_at = datetime(2026, 1, 3, 0, 0, tzinfo=UTC)
+    message_by_content["Reply 2"].created_at = datetime(2026, 1, 3, 0, 1, tzinfo=UTC)
     await db_session.flush()
 
     list_response = await client.get("/v1/conversations", headers=_auth_headers(access_token))
@@ -300,7 +346,14 @@ async def test_get_conversation_returns_messages_in_chronological_order(
     assert body["channel"] == "sms"
     assert body["contact_phone_number"] == "+15551110000"
     contents = [m["content"] for m in body["messages"]]
-    assert contents == ["Third message", "First message", "Second message"]
+    assert contents == [
+        "Third message",
+        "Reply 3",
+        "First message",
+        "Reply 1",
+        "Second message",
+        "Reply 2",
+    ]
 
 
 async def test_get_conversation_requires_session_auth(

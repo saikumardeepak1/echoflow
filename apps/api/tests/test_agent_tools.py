@@ -300,3 +300,31 @@ async def test_execute_tool_unknown_name_returns_error_without_raising(
     )
 
     assert result == {"error": "Unknown tool: delete_everything"}
+
+
+# --- end_call -----------------------------------------------------------------
+
+
+async def test_end_call_returns_an_acknowledgement_without_touching_any_service(
+    db_session: AsyncSession,
+) -> None:
+    """`end_call` is a pure control-flow signal (see app/agent/tools.py and
+    app/agent/graph.py's `should_end_call`): calling it never reads or
+    writes any organization/contact-scoped data, it only needs to return a
+    well-formed function response for Gemini's conversation history.
+    """
+    organization = await _make_org(db_session)
+    contact = await _make_contact(db_session, organization.id)
+
+    result = await tools.end_call(db_session, organization.id, contact.id)
+
+    assert result == {"acknowledged": True}
+
+
+async def test_execute_tool_dispatches_end_call(db_session: AsyncSession) -> None:
+    organization = await _make_org(db_session)
+    contact = await _make_contact(db_session, organization.id)
+
+    result = await tools.execute_tool(db_session, organization.id, contact.id, "end_call", {})
+
+    assert result == {"acknowledged": True}

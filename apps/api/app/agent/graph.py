@@ -1,18 +1,20 @@
 """The agent's LangGraph tool-calling loop (see docs/TDD.md section 3.3).
 
 An `agent` node calls Gemini (via app/agent/gemini_client.py) with the
-running conversation plus the four tool declarations (app/agent/tools.py).
-If Gemini's response contains one or more function calls, a `tools` node
-executes each of them against the relevant service, scoped to the
-organization/contact the graph state carries (never to ids Gemini's tool
-call arguments might supply, see app/agent/tools.py), appends the results
-to the conversation, and loops back to `agent`. Once Gemini responds with
-plain text and no function calls, the graph ends. A response with more than
-one function call in it (Gemini can request several tools in parallel) is
-executed as a batch by one pass through `tools`; a conversation that needs
-several rounds of tool calls (e.g. look up an order, then separately check
-availability) is handled by the loop running through `agent` and `tools`
-more than once within a single `run_agent_turn` call.
+running conversation plus the five tool declarations (app/agent/tools.py:
+the four domain tools plus `end_call`, the signal the model uses to say a
+voice conversation is resolved, see `AgentTurnResult`). If Gemini's response
+contains one or more function calls, a `tools` node executes each of them
+against the relevant service, scoped to the organization/contact the graph
+state carries (never to ids Gemini's tool call arguments might supply, see
+app/agent/tools.py), appends the results to the conversation, and loops back
+to `agent`. Once Gemini responds with plain text and no function calls, the
+graph ends. A response with more than one function call in it (Gemini can
+request several tools in parallel) is executed as a batch by one pass
+through `tools`; a conversation that needs several rounds of tool calls
+(e.g. look up an order, then separately check availability) is handled by
+the loop running through `agent` and `tools` more than once within a single
+`run_agent_turn` call.
 
 Conversation memory is loaded from the `messages` table by the caller
 before this module runs at all (windowed to `HISTORY_WINDOW` turns), the
@@ -22,6 +24,7 @@ each turn, not a graph that runs long-lived and persists its own state.
 """
 
 import uuid
+from dataclasses import dataclass
 from typing import Any, TypedDict
 
 from google.genai import types
@@ -68,6 +71,12 @@ class AgentState(TypedDict):
     been run, for callers that want to log or inspect what the agent did
     during the turn. `response_text` is `None` until Gemini returns a
     plain-text response, which is also the graph's end condition.
+    `should_end_call` starts `False` and flips to `True` for good once the
+    `tools` node executes an `end_call` call (see `agent_tools.end_call`);
+    it survives every later `agent`/`tools` round of the same turn since
+    neither node's returned partial state overwrites a key it doesn't
+    mention, so a turn that calls `end_call` and then keeps using other
+    tools before its final reply still reports the call as resolved.
     """
 
     organization_id: uuid.UUID
@@ -77,6 +86,23 @@ class AgentState(TypedDict):
     pending_tool_calls: list[PendingToolCall]
     executed_tool_calls: list[PendingToolCall]
     response_text: str | None
+    should_end_call: bool
+
+
+@dataclass(frozen=True)
+class AgentTurnResult:
+    """What `run_agent_turn` hands back to its caller: the reply to speak or
+    text back, plus whether the agent considers the conversation resolved.
+
+    `should_end_call` is voice-specific in practice (see app/api/webhooks.py:
+    the SMS webhook always keeps texting regardless of this flag, since
+    there is no "hang up" equivalent for a text thread), but it is computed
+    the same way for both channels since nothing about the graph itself
+    is channel-aware; only the caller decides what to do with it.
+    """
+
+    reply_text: str
+    should_end_call: bool
 
 
 def _history_to_contents(message_history: list[HistoryMessage]) -> list[types.Content]:
@@ -170,6 +196,7 @@ def _build_graph(session: AsyncSession) -> Any:
 
     async def tools_node(state: AgentState) -> dict[str, Any]:
         response_parts = []
+        called_end_call = False
         for call in state["pending_tool_calls"]:
             result = await agent_tools.execute_tool(
                 session,
@@ -181,12 +208,15 @@ def _build_graph(session: AsyncSession) -> Any:
             response_parts.append(
                 types.Part.from_function_response(name=call["name"], response=result)
             )
+            if call["name"] == agent_tools.END_CALL_TOOL_NAME:
+                called_end_call = True
 
         function_response_content = types.Content(role="user", parts=response_parts)
         return {
             "contents": [*state["contents"], function_response_content],
             "pending_tool_calls": [],
             "executed_tool_calls": [*state["executed_tool_calls"], *state["pending_tool_calls"]],
+            "should_end_call": state["should_end_call"] or called_end_call,
         }
 
     graph.add_node("agent", _agent_node)
@@ -203,17 +233,22 @@ async def run_agent_turn(
     contact_id: uuid.UUID,
     conversation_id: uuid.UUID,
     message_history: list[HistoryMessage],
-) -> str:
+) -> AgentTurnResult:
     """Run one turn of the agent's tool-calling loop and return its final
-    plain-text reply.
+    plain-text reply plus whether the agent considers the conversation
+    resolved.
 
     `message_history` is the conversation loaded from the `messages` table
     by the caller (see the module docstring), already including the latest
     inbound turn; this function windows it, converts it to Gemini's
     `Content` format, and drives the `agent`/`tools` graph until Gemini
     returns a plain-text response, however many rounds of tool calls that
-    takes. Webhook handlers (a later issue, per docs/TDD.md section 3.4)
-    are the intended caller.
+    takes. Webhook handlers (app/api/webhooks.py) are the intended caller.
+
+    `AgentTurnResult.should_end_call` is `True` once the model has called
+    the `end_call` tool (app/agent/tools.py) during the turn, however many
+    rounds ago that was; see `AgentState.should_end_call`'s docstring for
+    why that flag survives the rest of the turn once set.
     """
     graph = _build_graph(session)
     initial_state: AgentState = {
@@ -224,6 +259,10 @@ async def run_agent_turn(
         "pending_tool_calls": [],
         "executed_tool_calls": [],
         "response_text": None,
+        "should_end_call": False,
     }
     final_state = await graph.ainvoke(initial_state)
-    return final_state["response_text"] or ""
+    return AgentTurnResult(
+        reply_text=final_state["response_text"] or "",
+        should_end_call=final_state["should_end_call"],
+    )
