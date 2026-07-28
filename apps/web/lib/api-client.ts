@@ -1,5 +1,12 @@
 import { clearTokens, getAccessToken, getRefreshToken, storeTokenPair } from "./token-storage";
-import type { LoginRequest, RefreshRequest, TokenPairResponse } from "./types";
+import type {
+  Conversation,
+  ConversationChannel,
+  ConversationDetail,
+  LoginRequest,
+  RefreshRequest,
+  TokenPairResponse,
+} from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
@@ -128,6 +135,27 @@ export async function login(payload: LoginRequest): Promise<TokenPairResponse> {
 
 export function logout(): void {
   clearTokens();
+}
+
+/**
+ * Conversations belonging to the caller's organization, most recently
+ * created first (GET /v1/conversations, see
+ * apps/api/app/api/conversations.py). Optionally filtered by channel.
+ */
+export async function listConversations(params?: {
+  channel?: ConversationChannel;
+}): Promise<Conversation[]> {
+  const query = params?.channel ? `?channel=${encodeURIComponent(params.channel)}` : "";
+  return apiFetch<Conversation[]>(`/v1/conversations${query}`);
+}
+
+/**
+ * A single conversation with its full transcript in chronological order
+ * (GET /v1/conversations/{id}). Throws `ApiError` with status 404 if the
+ * conversation doesn't exist or belongs to another organization.
+ */
+export async function getConversation(id: string): Promise<ConversationDetail> {
+  return apiFetch<ConversationDetail>(`/v1/conversations/${encodeURIComponent(id)}`);
 }
 
 export { getAccessToken, getStoredUser } from "./token-storage";
