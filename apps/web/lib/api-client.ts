@@ -3,6 +3,8 @@ import type {
   Conversation,
   ConversationChannel,
   ConversationDetail,
+  KnowledgeDocument,
+  KnowledgeDocumentCreateRequest,
   LoginRequest,
   RefreshRequest,
   TokenPairResponse,
@@ -135,6 +137,24 @@ export async function login(payload: LoginRequest): Promise<TokenPairResponse> {
 
 export function logout(): void {
   clearTokens();
+}
+
+/** Lists the caller's organization's knowledge documents, newest first. */
+export function listKnowledgeDocuments(): Promise<KnowledgeDocument[]> {
+  return apiFetch<KnowledgeDocument[]>("/v1/knowledge-documents");
+}
+
+export function createKnowledgeDocument(
+  payload: KnowledgeDocumentCreateRequest,
+): Promise<KnowledgeDocument> {
+  return apiFetch<KnowledgeDocument>("/v1/knowledge-documents", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteKnowledgeDocument(id: string): Promise<void> {
+  return apiFetch<void>(`/v1/knowledge-documents/${id}`, { method: "DELETE" });
 }
 
 /**

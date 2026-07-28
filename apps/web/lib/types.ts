@@ -30,6 +30,23 @@ export interface TokenPairResponse {
 }
 
 /**
+ * Mirrors apps/api/app/schemas/knowledge_document.py. `content_tsv` (the
+ * Postgres full-text search index) is intentionally omitted from the API
+ * response and therefore from this type.
+ */
+export interface KnowledgeDocument {
+  id: string;
+  title: string;
+  content: string;
+  created_at: string;
+}
+
+export interface KnowledgeDocumentCreateRequest {
+  title: string;
+  content: string;
+}
+
+/**
  * Mirrors apps/api/app/schemas/conversation.py. `channel` and `status` are
  * kept as `string` (rather than a union) since the API itself treats them
  * as plain strings; `ConversationChannel` below is the narrower set the
