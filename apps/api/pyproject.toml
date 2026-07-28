@@ -78,11 +78,13 @@ testpaths = ["tests"]
 concurrency = ["greenlet"]
 
 # app/workers/worker.py is the RQ process entrypoint: it constructs a Redis
-# connection, a Queue, and a Worker, then calls worker.work(), which blocks
-# forever polling for jobs. There is nothing meaningful a test could assert
-# about it beyond "the constructors were called with some arguments, then
-# wired to a mocked and never-called .work()", which would exercise no real
-# behavior. It has no jobs registered yet (that lands with the notification
-# worker in a later milestone), so it is excluded from coverage measurement
-# entirely rather than padded with a tautological test.
+# connection, a Queue, and a Worker, starts the reminder-sweep thread, then
+# calls worker.work(), which blocks forever polling for jobs. There is
+# nothing meaningful a test could assert about it beyond "the constructors
+# were called with some arguments, then wired to a mocked and never-called
+# .work()", which would exercise no real behavior, so it is excluded from
+# coverage measurement entirely rather than padded with a tautological test.
+# The actual job logic (app/workers/jobs.py) and the sweep's interval loop
+# (app/workers/scheduler.py) are both real, testable functions and are
+# covered by tests, not omitted.
 omit = ["app/workers/worker.py"]
