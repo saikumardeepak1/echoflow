@@ -28,3 +28,20 @@ export interface TokenPairResponse {
   expires_in: number;
   user: UserResponse;
 }
+
+/**
+ * Mirrors apps/api/app/schemas/knowledge_document.py. `content_tsv` (the
+ * Postgres full-text search index) is intentionally omitted from the API
+ * response and therefore from this type.
+ */
+export interface KnowledgeDocument {
+  id: string;
+  title: string;
+  content: string;
+  created_at: string;
+}
+
+export interface KnowledgeDocumentCreateRequest {
+  title: string;
+  content: string;
+}
