@@ -1,5 +1,7 @@
 import { clearTokens, getAccessToken, getRefreshToken, storeTokenPair } from "./token-storage";
 import type {
+  AnalyticsOverviewParams,
+  AnalyticsOverviewResponse,
   AppointmentResponse,
   AppointmentUpdateRequest,
   Conversation,
@@ -192,6 +194,21 @@ export async function listConversations(params?: {
  */
 export async function getConversation(id: string): Promise<ConversationDetail> {
   return apiFetch<ConversationDetail>(`/v1/conversations/${encodeURIComponent(id)}`);
+}
+
+/**
+ * Aggregate call/SMS volume, appointments booked, and average conversation
+ * length for the caller's organization over `[start_date, end_date]`
+ * (GET /v1/analytics/overview, see apps/api/app/api/analytics.py).
+ */
+export async function getAnalyticsOverview(
+  params: AnalyticsOverviewParams,
+): Promise<AnalyticsOverviewResponse> {
+  const query = new URLSearchParams({
+    start_date: params.start_date,
+    end_date: params.end_date,
+  });
+  return apiFetch<AnalyticsOverviewResponse>(`/v1/analytics/overview?${query.toString()}`);
 }
 
 export { getAccessToken, getStoredUser } from "./token-storage";
