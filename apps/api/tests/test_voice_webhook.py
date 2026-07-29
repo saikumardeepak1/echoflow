@@ -233,6 +233,31 @@ async def test_incoming_call_missing_signature_is_rejected_before_any_db_work(
     assert contacts == []
 
 
+async def test_incoming_call_invalid_signature_is_rejected_before_any_db_work(
+    client: AsyncClient, db_session: AsyncSession, twilio_auth_token: str
+) -> None:
+    await _make_org_with_number(db_session, "+15005550006")
+    params = {
+        "To": "+15005550006",
+        "From": "+15551234567",
+        "CallSid": "CA0000000001",
+    }
+
+    response = await client.post(
+        "/v1/webhooks/voice/incoming",
+        data=params,
+        headers={"X-Twilio-Signature": "not-a-real-signature"},
+    )
+
+    assert response.status_code == 403
+    contacts = (
+        await db_session.execute(
+            select(Contact).where(Contact.e164_number == "+15551234567")
+        )
+    ).scalars().all()
+    assert contacts == []
+
+
 # --- POST /v1/webhooks/voice/respond ----------------------------------------
 
 
@@ -454,6 +479,32 @@ async def test_respond_missing_signature_is_rejected_before_any_db_work(
     }
 
     response = await client.post("/v1/webhooks/voice/respond", data=params)
+
+    assert response.status_code == 403
+    contacts = (
+        await db_session.execute(
+            select(Contact).where(Contact.e164_number == "+15551234567")
+        )
+    ).scalars().all()
+    assert contacts == []
+
+
+async def test_respond_invalid_signature_is_rejected_before_any_db_work(
+    client: AsyncClient, db_session: AsyncSession, twilio_auth_token: str
+) -> None:
+    await _make_org_with_number(db_session, "+15005550006")
+    params = {
+        "To": "+15005550006",
+        "From": "+15551234567",
+        "CallSid": "CA0000000001",
+        "SpeechResult": "Hello?",
+    }
+
+    response = await client.post(
+        "/v1/webhooks/voice/respond",
+        data=params,
+        headers={"X-Twilio-Signature": "not-a-real-signature"},
+    )
 
     assert response.status_code == 403
     contacts = (

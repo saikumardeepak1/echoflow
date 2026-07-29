@@ -77,7 +77,7 @@ testpaths = ["tests"]
 # line that runs after the first awaited query in a request handler (the
 # greenlet switch loses the trace function), which would misreport real,
 # exercised route code (see app/api/auth.py, app/api/api_keys.py) as untested.
-concurrency = ["greenlet"]
+concurrency = ["greenlet", "thread"]
 
 # app/workers/worker.py is the RQ process entrypoint: it constructs a Redis
 # connection, a Queue, and a Worker, starts the reminder-sweep thread, then
@@ -90,3 +90,17 @@ concurrency = ["greenlet"]
 # (app/workers/scheduler.py) are both real, testable functions and are
 # covered by tests, not omitted.
 omit = ["app/workers/worker.py"]
+
+[tool.coverage.report]
+# Set from the suite's actual measured coverage (99.68% as of the
+# test-coverage hardening pass, issue #22), with a small margin for
+# incidental drift rather than pinned to the exact figure. The handful of
+# remaining uncovered lines are the real Gemini network call in
+# app/agent/gemini_client.py (marked `# pragma: no cover`; see that
+# module's docstring: it is the seam tests monkeypatch around instead of
+# hitting the live API), app/core/db.get_session's production code path
+# (every test overrides this FastAPI dependency rather than running through
+# the real session factory), and a couple of defensive branches in
+# app/services/appointment_service.py, app/workers/jobs.py, and
+# app/workers/scheduler.py not worth contriving a test for.
+fail_under = 98
