@@ -98,3 +98,22 @@ export interface Conversation {
 export interface ConversationDetail extends Conversation {
   messages: Message[];
 }
+
+/**
+ * Mirrors apps/api/app/schemas/analytics.py (AnalyticsOverviewResponse,
+ * issue #19). `average_conversation_length` is message count per
+ * conversation (turns per call/thread), not wall-clock duration.
+ */
+export interface AnalyticsOverviewResponse {
+  start_date: string;
+  end_date: string;
+  call_volume: number;
+  sms_volume: number;
+  appointments_booked: number;
+  average_conversation_length: number;
+}
+
+export interface AnalyticsOverviewParams {
+  start_date: string;
+  end_date: string;
+}
