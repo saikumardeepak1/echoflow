@@ -23,7 +23,21 @@ class BusinessHoursRequest(BaseModel):
 
 
 class BusinessHoursResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    """The persisted view of a single weekday's business hours."""
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
+            "examples": [
+                {
+                    "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                    "day_of_week": 0,
+                    "opens_at": "09:00:00",
+                    "closes_at": "17:00:00",
+                }
+            ]
+        },
+    )
 
     id: uuid.UUID
     day_of_week: int
@@ -32,6 +46,8 @@ class BusinessHoursResponse(BaseModel):
 
 
 class AppointmentCreateRequest(BaseModel):
+    """Books a new appointment for the caller's organization."""
+
     model_config = ConfigDict(
         json_schema_extra={
             "examples": [
@@ -56,6 +72,19 @@ class AppointmentUpdateRequest(BaseModel):
     (see app.services.appointment_service.update_appointment).
     """
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "scheduled_at": "2026-07-29T16:00:00Z",
+                    "duration_minutes": 45,
+                    "notes": "Patient asked to push back an hour",
+                    "status": "confirmed",
+                }
+            ]
+        }
+    )
+
     scheduled_at: datetime | None = None
     duration_minutes: int | None = Field(default=None, gt=0)
     notes: str | None = None
@@ -63,7 +92,24 @@ class AppointmentUpdateRequest(BaseModel):
 
 
 class AppointmentResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    """The persisted, listable view of an appointment."""
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={
+            "examples": [
+                {
+                    "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                    "contact_id": "9c858901-8a57-4791-81fe-4c455b099bc9",
+                    "scheduled_at": "2026-07-28T15:00:00Z",
+                    "duration_minutes": 30,
+                    "status": "confirmed",
+                    "notes": "Follow-up cleaning",
+                    "created_at": "2026-07-23T09:15:00Z",
+                }
+            ]
+        },
+    )
 
     id: uuid.UUID
     contact_id: uuid.UUID
