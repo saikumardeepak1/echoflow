@@ -10,7 +10,8 @@ services:
       # Bound to localhost only: postgres does not need to be reachable from
       # outside this host, only from the api/migrate/worker containers over
       # the compose network. Exposed on localhost so an operator can still
-      # psql in for debugging.
+      # psql in for debugging. See README.md#deployment for the production
+      # hardening notes this reflects.
       - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
