@@ -325,3 +325,29 @@ async def test_missing_signature_is_rejected_before_any_db_work(
         )
     ).scalars().all()
     assert contacts == []
+
+
+async def test_invalid_signature_is_rejected_before_any_db_work(
+    client: AsyncClient, db_session: AsyncSession, twilio_auth_token: str
+) -> None:
+    await _make_org_with_number(db_session, "+15005550006")
+    params = {
+        "To": "+15005550006",
+        "From": "+15551234567",
+        "Body": "Hello?",
+        "MessageSid": "SM0000000001",
+    }
+
+    response = await client.post(
+        "/v1/webhooks/sms/incoming",
+        data=params,
+        headers={"X-Twilio-Signature": "not-a-real-signature"},
+    )
+
+    assert response.status_code == 403
+    contacts = (
+        await db_session.execute(
+            select(Contact).where(Contact.e164_number == "+15551234567")
+        )
+    ).scalars().all()
+    assert contacts == []

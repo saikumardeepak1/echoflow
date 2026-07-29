@@ -15,6 +15,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from redis import Redis
 from rq import Queue, Worker
+from starlette.types import Message, Receive, Scope, Send
 
 from app.core.config import settings
 from app.core.logging import (
@@ -23,6 +24,7 @@ from app.core.logging import (
     correlation_id_var,
     set_correlation_id,
 )
+from app.core.middleware import CorrelationIdMiddleware
 from app.main import app
 from app.workers.worker import CorrelationIdWorker
 
@@ -137,6 +139,38 @@ async def test_request_correlation_id_appears_on_every_log_line_emitted_during_h
     assert request_records, "expected at least one log line from the health handler"
     for record in request_records:
         assert record.correlation_id == known_id
+
+
+async def test_middleware_passes_non_http_scopes_straight_through() -> None:
+    """A ``lifespan`` scope (startup/shutdown events) is not a request and
+    carries no headers to correlate, so the middleware should hand it
+    straight to the wrapped app without touching the correlation id
+    contextvar or the ``send`` callable at all.
+    """
+    calls: list[tuple[Scope, Receive, Send]] = []
+
+    async def inner_app(scope: Scope, receive: Receive, send: Send) -> None:
+        calls.append((scope, receive, send))
+
+    middleware = CorrelationIdMiddleware(inner_app)
+
+    async def receive() -> Message:
+        raise AssertionError("receive should not be called for this test")
+
+    sent_messages: list[Message] = []
+
+    async def send(message: Message) -> None:
+        sent_messages.append(message)
+
+    scope: Scope = {"type": "lifespan"}
+    assert correlation_id_var.get() is None
+
+    await middleware(scope, receive, send)
+
+    assert len(calls) == 1
+    assert calls[0][0] is scope
+    assert sent_messages == []
+    assert correlation_id_var.get() is None
 
 
 # --- CorrelationIdWorker ------------------------------------------------------

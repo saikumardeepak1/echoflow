@@ -54,6 +54,15 @@ def _function_call_response(*calls: tuple[str, dict[str, Any]]) -> types.Generat
     )
 
 
+def _blocked_response() -> types.GenerateContentResponse:
+    """A response with no candidates at all, as Gemini returns when the
+    prompt or output is blocked by a safety filter. Neither a function call
+    nor any text comes back, so the graph must still end the turn instead of
+    raising on the missing `candidates[0]`.
+    """
+    return types.GenerateContentResponse(candidates=None)
+
+
 @pytest.fixture
 def organization_id() -> uuid.UUID:
     return uuid.uuid4()
@@ -95,6 +104,31 @@ async def test_plain_response_never_calls_a_tool(
     assert result == graph.AgentTurnResult(
         reply_text="Hi! How can I help?", should_end_call=False
     )
+    execute_tool_mock.assert_not_called()
+
+
+async def test_blocked_response_with_no_candidates_ends_with_empty_reply(
+    db_session: AsyncSession,
+    organization_id: uuid.UUID,
+    contact_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A safety-filtered response has no candidates and therefore no
+    function calls and no text; the graph should treat it like an
+    empty plain-text reply and end the turn rather than erroring out.
+    """
+    monkeypatch.setattr(
+        gemini_client, "generate_content", _StubGenerateContent(_blocked_response())
+    )
+    execute_tool_mock = AsyncMock()
+    monkeypatch.setattr(agent_tools, "execute_tool", execute_tool_mock)
+
+    result = await graph.run_agent_turn(
+        db_session, organization_id, contact_id, conversation_id, _history()
+    )
+
+    assert result == graph.AgentTurnResult(reply_text="", should_end_call=False)
     execute_tool_mock.assert_not_called()
 
 

@@ -28,7 +28,7 @@ MODEL_NAME = "gemini-2.0-flash"
 _client: genai.Client | None = None
 
 
-def _get_client() -> genai.Client:
+def _get_client() -> genai.Client:  # pragma: no cover
     global _client
     if _client is None:
         _client = genai.Client(api_key=settings.gemini_api_key)
@@ -37,7 +37,7 @@ def _get_client() -> genai.Client:
 
 def generate_content(
     contents: list[types.Content], tools: list[types.Tool]
-) -> types.GenerateContentResponse:
+) -> types.GenerateContentResponse:  # pragma: no cover
     """Call Gemini with the running conversation `contents` and the agent's
     `tools` function declarations, and return its response.
 
@@ -45,6 +45,14 @@ def generate_content(
     (monkeypatch it in tests, or replace it with a different implementation
     entirely) to change what "calling Gemini" means without touching
     app/agent/graph.py at all.
+
+    Excluded from coverage: every test monkeypatches this function itself
+    (see tests/test_agent_graph.py, tests/test_sms_webhook.py,
+    tests/test_voice_webhook.py) rather than calling through to the real
+    `google-genai` client, since doing otherwise would require a live
+    GEMINI_API_KEY and network access. There is nothing left for a test to
+    exercise here beyond "the SDK was called with some arguments", which
+    the SDK's own test suite already covers.
     """
     client = _get_client()
     return client.models.generate_content(
