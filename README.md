@@ -1,10 +1,79 @@
 # EchoFlow
 
+[![CI](https://github.com/saikumardeepak1/echoflow/actions/workflows/ci.yml/badge.svg)](https://github.com/saikumardeepak1/echoflow/actions/workflows/ci.yml)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
+[![Tests](https://img.shields.io/badge/tests-299-brightgreen.svg)](#running-tests)
+[![Coverage gate](https://img.shields.io/badge/coverage%20gate-98%25-brightgreen.svg)](apps/api/pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-black.svg)](LICENSE)
+
 Voice and SMS agent platform: an AI agent answers inbound calls and texts, holds a real conversation, looks up orders, answers questions from your knowledge base, and books appointments.
 
 ## Why EchoFlow
 
 Small and mid-size businesses lose calls and customer trust because they cannot staff a phone line around the clock. EchoFlow connects to a Twilio number and gives every caller (voice or SMS) a conversational agent that can actually do things: search your FAQ, look up an order, check appointment availability, and book a slot, end to end, without a human picking up.
+
+<!-- SCREENSHOT: add a dashboard screenshot here (conversation log or appointment calendar). -->
+<!-- DEMO: a 60 to 90 second GIF or video of a real call or SMS exchange belongs here, above the architecture diagram. -->
+
+## Architecture
+
+```mermaid
+graph TB
+    Caller["Caller / texter"] -->|"voice call / SMS"| Twilio["Twilio<br/>(voice + SMS)"]
+    Staff["Business staff"] -->|"browser"| Web["Next.js dashboard"]
+
+    subgraph EchoFlow["EchoFlow Platform"]
+        Twilio -->|"webhook: signed POST"| API["FastAPI API service"]
+        Web -->|"JWT session auth<br/>REST"| API
+        API -->|"verify X-Twilio-Signature"| API
+        API -->|"read/write contacts, conversations, messages"| DB[(PostgreSQL)]
+        API -->|"run agent graph"| Graph["LangGraph agent<br/>(Gemini function calling)"]
+        Graph -->|"tool: knowledge_search"| DB
+        Graph -->|"tool: lookup_order"| DB
+        Graph -->|"tool: check_availability /<br/>book_appointment"| DB
+        API -->|"return TwiML"| Twilio
+        API -->|"enqueue notify_appointment"| Redis[(Redis<br/>queue)]
+        Redis -->|"job dequeue"| Worker["RQ worker"]
+        Worker -->|"send SMS via REST API"| Twilio
+        Worker -->|"update notification status"| DB
+    end
+```
+
+An inbound call or text arrives as a signature-verified Twilio webhook. The API resolves which organization owns the called number, loads the conversation from Postgres, and runs the agent. The reply goes back to Twilio as TwiML on the same request, so the caller is never waiting on a queue. Anything that can happen later, such as confirmation and reminder SMS, is pushed onto Redis and handled by the RQ worker.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component responsibilities, the entity relationship model, and the request lifecycle.
+
+## Agent design
+
+The agent is a LangGraph cycle between two nodes, `agent` and `tools`, compiled fresh for each turn ([`apps/api/app/agent/graph.py`](apps/api/app/agent/graph.py)).
+
+The `agent` node calls Gemini with the running conversation and the tool declarations. If the response contains function calls, they become pending work and control passes to `tools`; if it contains plain text instead, the graph ends and that text is the reply. The `tools` node executes every pending call, appends one function response per call, and loops back to `agent`. That cycle repeats as many rounds as the model needs, so a caller asking to book an appointment can have the agent check availability and then book in a single turn without the caller re-prompting.
+
+Conversation history is loaded from the `messages` table by the webhook handler, windowed to the last 20 turns (`HISTORY_WINDOW`), and converted to Gemini's `Content` format. The model's own response content is appended to history whether or not it contained tool calls, so the model always sees its previous turn on the next round trip.
+
+### Tools
+
+| Tool | Arguments | What it does |
+|---|---|---|
+| `knowledge_search` | `query` (required) | Full-text search over the organization's knowledge base in Postgres |
+| `lookup_order` | `order_number`, `phone_number` | Finds an order by number, or the caller's most recent order by phone number |
+| `check_availability` | `date` (required, ISO 8601) | Returns open appointment slots for a date |
+| `book_appointment` | `scheduled_at` (required), `duration_minutes`, `notes` | Books a slot, intended to follow `check_availability` |
+| `end_call` | none | A deliberate no-op that signals the agent considers the conversation resolved |
+
+`end_call` returns `{"acknowledged": true}` rather than nothing, because every tool call needs a matching function response for the next turn's history to stay well formed. Its only job is to give the `tools` node a call it can recognize by name and flip the end-of-call flag on.
+
+Every tool is dispatched through `execute_tool` with `organization_id` and `contact_id` injected server side rather than taken from model arguments, so the model cannot reach another organization's data by inventing an id.
+
+### Failure handling
+
+A tool name the model hallucinated returns `{"error": "Unknown tool: ..."}` as a well-formed function response instead of raising, so one bad call does not crash the run and the model can read the error and recover on the next round.
+
+### Known limitations
+
+- The `agent` and `tools` cycle has no explicit iteration cap of its own; it relies on LangGraph's default recursion limit. A model that kept calling tools without ever returning text would run until that limit rather than failing fast with a domain-specific error.
+- `book_appointment` is described to the model as something to call after confirming a slot with `check_availability`, but nothing enforces that ordering; a double booking is prevented by the appointment service, not by the graph.
+- Voice speech recognition is whatever Twilio's `<Gather input="speech">` returns. There is no confidence threshold or re-prompt on a low quality transcription.
 
 ## Documentation
 
@@ -16,7 +85,9 @@ Small and mid-size businesses lose calls and customer trust because they cannot 
 
 ## Status
 
-Early development. See [Roadmap](docs/ROADMAP.md) and the [issue tracker](https://github.com/saikumardeepak1/echoflow/issues) for current progress.
+v1 is feature complete. All 24 planned issues are closed and all 24 pull requests are merged across four milestones (Foundation, Voice and SMS Channel Integration, Agent Intelligence, Dashboard and Hardening). CI runs on every pull request and is green on main, with a 98% coverage gate enforced over 299 tests.
+
+The stack has been verified end to end against a real `docker compose up` (Postgres, Redis, API, worker, and web all healthy, with the worker actually consuming jobs) using the real Twilio SDK. It has not been run against live customer call traffic. See [Roadmap](docs/ROADMAP.md) for what is deliberately out of scope and the [issue tracker](https://github.com/saikumardeepak1/echoflow/issues) for the full build history.
 
 ## Project structure
 
